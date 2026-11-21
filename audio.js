@@ -1,0 +1,68 @@
+'use strict';
+const SR=32000, STEMS=['Vocals','Drums','Bass','Guitar','Piano','Other'], ids=STEMS.map(s=>s.toLowerCase()), T=2*Math.PI;
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)), db=v=>20*Math.log10(Math.max(1e-12,v)), amp=d=>10**(d/20);
+const dual=(n)=>[new Float32Array(n),new Float32Array(n)];
+const VOICEBANK=/*__VOICE__*/{};
+let tracks=[], backing=null,rate=SR,BPM=88,title='Ночная смена',cues=[],sourceKind='demo',mix=[],revision=0,sessionSeed=4187;
+let ac=null,bus=null,meter=null,kMeter=null,nodes=[],playing=false,offset=0,started=0,looping=false,selection=[2,4],blind=null,externalB=null;
+let peaks=[],cloudTrack=null;
+function rng(seed){let x=seed>>>0;return ()=>((x=(Math.imul(x,1664525)+1013904223)>>>0)/4294967296)}
+function hash(s){let h=2166136261;for(const c of s)h=Math.imul(h^c.charCodeAt(0),16777619);return h>>>0}
+function makeTake(bpm,key,seed,lyrics,instrumental=false){
+ const beat=60/bpm,n=Math.ceil(32*beat*SR), channels=ids.map(()=>dual(n)), bg=dual(n),rand=rng(seed);
+ const root={Dm:38,Am:33,Cm:36,Fm:41,Gm:43}[key]||38, hz=m=>440*2**((m-69)/12);
+ const add=(ch,at,len,fn,pan=0)=>{const i0=Math.round(at*SR),nn=Math.min(Math.ceil(len*SR),n-i0);if(nn<=0)return;const l=Math.cos((pan+1)*Math.PI/4),r=Math.sin((pan+1)*Math.PI/4);for(let j=0;j<nn;j++){const v=fn(j/SR,j);ch[0][i0+j]+=v*l;ch[1][i0+j]+=v*r}};
+ const sine=(f,t)=>Math.sin(T*f*t);
+ for(let bar=0;bar<8;bar++){
+  const base=bar*4*beat, note=root+[0,0,-2,-5,0,3,-2,-5][bar],chord=[0,3,7,10];
+  for(let k=0;k<8;k++){const swing=k%2?.037*beat:0,at=base+k*beat/2+swing;let last=0;
+   add(channels[1],at,.12,t=>{const a=rand()*2-1,v=a-last;last=a;return v*Math.exp(-t*(k%2?65:43))*(.054+rand()*.012)},(k%3-1)*.32)}
+  for(const k of (bar%2?[0,1.52,2.77]:[0,.76,2.45,3.5]))add(channels[1],base+k*beat,.28,t=>.67*Math.sin(T*(44*t+1.95*(1-Math.exp(-t*47))))*Math.exp(-t*15));
+  for(const k of [1,3])add(channels[1],base+k*beat+.012,.22,t=>((rand()*2-1)*.31*Math.exp(-t*27)+.18*sine(171,t)*Math.exp(-t*32)),.07);
+  for(const [k,d,o] of [[0,1.36,0],[1.63,.51,0],[2.45,.7,2],[3.46,.43,7]]){let f=hz(note+o);add(channels[2],base+k*beat,d*beat,t=>.43*Math.min(1,t*70,(d*beat-t)*35)*(sine(f,t)+.14*sine(f*2,t))*Math.exp(-t*1.8))}
+  for(const k of [0,2.55])for(const [i,interval] of chord.entries()){let f=hz(note+24+interval),at=base+k*beat+i*.012;
+   add(channels[4],at,1.4,t=>.085*(sine(f,t)+.37*sine(f*2.002,t)+.09*sine(f*3.99,t))*Math.exp(-t*(2.9+i*.32))*Math.min(t*110,1),(i-1.5)*.27)}
+  for(const k of [.53,1.77,3.26]){let f=hz(note+36+chord[Math.floor(rand()*4)]);add(channels[3],base+k*beat,.69,t=>.11*Math.min(1,t*120)*Math.exp(-t*6.8)*(sine(f,t)+.36*sine(f*2.99,t)+.11*sine(5*f,t)),bar%2?.42:-.43)}
+  for(const i of [0,7]){const f=hz(note+24+i);add(channels[5],base,4*beat,t=>.035*(sine(f,t)+.4*sine(f*1.004,t))*Math.sin(Math.PI*t/(4*beat))**.7,i?.69:-.64)}
+ }
+ const tex=lyrics.replace(/\[[^\]]*\]/g,'').trim().split(/\s+/).filter(Boolean).slice(0,32), words=[];
+ if(!instrumental)tex.forEach((word,i)=>{let st=(1+i*30/Math.max(1,tex.length))*beat, dur=Math.min(.93,beat*20/tex.length+.15),f=hz(root+24+[0,3,2,0,7][i%5]), key=word.toLowerCase().replace(/[^а-яё]/g,'');const a=VOICEBANK[key];
+  let speech=null;if(a){const bin=atob(a);speech=new Int16Array(bin.length/2);for(let j=0;j<speech.length;j++)speech[j]=bin.charCodeAt(2*j)|(bin.charCodeAt(2*j+1)<<8)}
+  if(speech){dur=Math.min(speech.length/16000,Math.max(.17,27*beat/tex.length));add(channels[0],st,dur,(t)=>.37*speech[Math.min(speech.length-1,Math.floor(t/dur*speech.length))]/32768)}
+  else add(channels[0],st,dur,t=>.15*Math.sin(Math.PI*t/dur)**.7*(sine(f,t)+.33*sine(3*f,t)+.12*sine(5*f,t)));
+  const echo=(t)=>.047*Math.sin(Math.PI*t/dur)**.8*(sine(f*1.5,t)+.3*sine(f*3,t));add(bg,st+.11,dur,echo,-.32);words.push({word,start:st,end:st+dur});
+ });
+ for(let c=0;c<2;c++)for(let j=0;j<n;j++)channels[0][c][j]+=bg[c][j];
+ return {channels,bg,words};
+}
+function len(){return tracks.find(Boolean)?.[0].length||0}function dur(){return len()/rate}function bars(){return Math.max(1,Math.ceil(dur()*BPM/240-1e-5))}function barSec(){return 240/BPM}
+function newMix(){return ids.map(()=>({gain:0,pan:0,m:false,s:false}))}
+function audible(i){return !mix[i].m&&(!mix.some(x=>x.s)||mix[i].s)}
+function panPair(l,r,p){const a=(p<0?p+1:p)*Math.PI/2;return p<=0?[l+r*Math.cos(a),r*Math.sin(a)]:[l*Math.cos(a),r+l*Math.sin(a)]}
+function renderMix(kind='master'){const out=dual(len());for(let k=0;k<6;k++){if(!audible(k)||!tracks[k])continue;let buf=tracks[k];if(k===0&&kind==='instrumental')continue;if(k===0&&kind==='tv'){if(!backing)continue;buf=backing}
+ const {gain,pan}=mix[k],g=amp(gain),a=(pan<0?pan+1:pan)*Math.PI/2,c=Math.cos(a),s=Math.sin(a);
+ for(let n=0;n<out[0].length;n++){const l=buf[0][n]||0,r=buf[1][n]||0;out[0][n]+=g*(pan<=0?l+r*c:l*c);out[1][n]+=g*(pan<=0?r*s:r+l*s)}}
+ return out}
+// ITU-R BS.1770 K-weighting, 400 ms blocks, 75% overlap, absolute and relative gates.
+function kco(rate,stage){const shelf=stage===0,f=shelf?1681.974450955533:38.13547087602444,Q=shelf?.7071752369554196:.5003270373238773,k=Math.tan(Math.PI*f/rate),d=1+k/Q+k*k;
+ const v=10**(3.999843853973347/20),m=v**.4996667741545416;
+ return shelf?[(v+m*k/Q+k*k)/d,2*(k*k-v)/d,(v-m*k/Q+k*k)/d,2*(k*k-1)/d,(1-k/Q+k*k)/d]:[1,-2,1,2*(k*k-1)/d,(1-k/Q+k*k)/d]}
+function blockPower(ch,sr){const hop=Math.max(1,Math.round(sr*.1)),bins=new Float64Array(Math.ceil(ch[0].length/hop));for(const samples of ch){const b=kco(sr,0),h=kco(sr,1);let a1=0,a2=0,b1=0,b2=0;for(let i=0;i<samples.length;i++){const x=samples[i],y=b[0]*x+a1;a1=b[1]*x-b[3]*y+a2;a2=b[2]*x-b[4]*y;const z=h[0]*y+b1;b1=h[1]*y-h[3]*z+b2;b2=h[2]*y-h[4]*z;bins[Math.floor(i/hop)]+=z*z}}
+ const q=[];for(let i=0;i+4<=Math.floor(ch[0].length/hop);i++)q.push((bins[i]+bins[i+1]+bins[i+2]+bins[i+3])/(4*hop));if(!q.length)q.push(bins.reduce((s,x)=>s+x,0)/Math.max(1,ch[0].length));return q}
+function integrated(ch,sr){let a=blockPower(ch,sr).filter(x=>x>10**((-70+.691)/10));if(!a.length)return -Infinity;const avg=xs=>xs.reduce((s,x)=>s+x,0)/xs.length, gate=avg(a)*.1;a=a.filter(x=>x>=gate);return -.691+10*Math.log10(avg(a))}
+function peak(ch){let p=0;for(const a of ch)for(let i=0;i<a.length;i++)p=Math.max(p,Math.abs(a[i]));return p}
+function scale(ch,g){return ch.map(a=>Float32Array.from(a,x=>x*g))}
+function printMix(ch,target,color=false){const v=integrated(ch,rate);if(!Number.isFinite(v))return ch;const g=amp(target-v),ceiling=amp(-1.2);
+ return ch.map(a=>{let last=0;return Float32Array.from(a,x=>{last+=.29*(x-last);const tone=color?.90*last+.10*x:x;const t=tone*g;return color?ceiling*Math.tanh(t*1.3/ceiling):clamp(t,-ceiling,ceiling)})})}
+function matched(a,b){const x=integrated(a,rate),y=integrated(b,rate);if(!Number.isFinite(x)||!Number.isFinite(y))throw Error('Одна из версий содержит тишину.');const target=Math.min(x,y,-15),ga=amp(target-x),gb=amp(target-y),guard=Math.min(1,amp(-1)/Math.max(peak(a)*ga,peak(b)*gb,.001));return {data:[scale(a,ga*guard),scale(b,gb*guard)],lufs:target+db(guard)}}
+function bufferFor(ch){let b=ac.createBuffer(2,ch[0].length,rate);ch.forEach((a,i)=>b.copyToChannel(a,i));return b}
+async function audioOn(){if(!ac){ac=new AudioContext();bus=ac.createGain();const rawSplit=ac.createChannelSplitter(2);bus.connect(rawSplit);meter=[0,1].map(i=>{const m=ac.createAnalyser();m.fftSize=2048;rawSplit.connect(m,i);return m});bus.connect(ac.destination);const shelf=ac.createIIRFilter(kco(ac.sampleRate,0).slice(0,3),[1,...kco(ac.sampleRate,0).slice(3)]),hi=ac.createIIRFilter(kco(ac.sampleRate,1).slice(0,3),[1,...kco(ac.sampleRate,1).slice(3)]);const split=ac.createChannelSplitter(2);bus.connect(shelf).connect(hi).connect(split);kMeter=[0,1].map(i=>{let m=ac.createAnalyser();m.fftSize=2048;split.connect(m,i);return m})}await ac.resume()}
+function pos(){return playing?Math.min(dur(),Math.max(0,ac.currentTime-started)):offset}
+function halt(){offset=pos();playing=false;for(const x of nodes){try{x.src.stop()}catch{}x.src.disconnect();x.g.disconnect();x.p.disconnect()}nodes=[]}
+async function start(at=offset){await audioOn();halt();if(at>=dur()-.005)at=0;offset=clamp(at,0,Math.max(0,dur()-.001));const now=ac.currentTime+.018;let list=blind?[blind.data[blind.map[blind.pick]]]:tracks;
+ list.forEach((arr,i)=>{if(!arr)return;const src=ac.createBufferSource(),g=ac.createGain(),p=ac.createStereoPanner();src.buffer=bufferFor(arr);src.connect(g).connect(p).connect(bus);g.gain.value=blind?1:audible(i)?amp(mix[i].gain):0;p.pan.value=blind?0:mix[i].pan;nodes.push({src,g,p,i});if(offset<src.buffer.duration)src.start(now,offset)});started=now-offset;playing=true}
+function levels(){if(blind)return;for(const n of nodes){n.g.gain.setTargetAtTime(audible(n.i)?amp(mix[n.i].gain):0,ac.currentTime,.012);n.p.pan.setTargetAtTime(mix[n.i].pan,ac.currentTime,.012)}}
+function refreshPeaks(){let n=len(),parts=Math.min(n,1500),step=Math.ceil(n/parts);peaks=[];for(let i=0;i<n;i+=step){let max=0;for(let j=i;j<Math.min(n,i+step);j+=Math.max(1,Math.floor(step/50))){let l=0,r=0;for(const ch of tracks){if(ch){l+=ch[0][j]||0;r+=ch[1][j]||0}}max=Math.max(max,Math.abs(l),Math.abs(r))}peaks.push(max)}}
+function waveBlob(ch,sr){const n=ch[0].length,b=new ArrayBuffer(44+n*6),v=new DataView(b),str=(i,s)=>{for(let j=0;j<s.length;j++)v.setUint8(i+j,s.charCodeAt(j))};str(0,'RIFF');v.setUint32(4,b.byteLength-8,true);str(8,'WAVEfmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,2,true);v.setUint32(24,sr,true);v.setUint32(28,sr*6,true);v.setUint16(32,6,true);v.setUint16(34,24,true);str(36,'data');v.setUint32(40,n*6,true);let p=44;for(let i=0;i<n;i++)for(const a of ch){let x=clamp(Math.round(a[i]*8388608),-8388608,8388607);v.setUint8(p++,x);v.setUint8(p++,x>>8);v.setUint8(p++,x>>16)}return new Uint8Array(b)}
+const crcTable=Array.from({length:256},(_,i)=>{for(let j=0;j<8;j++)i=i&1?(i>>>1)^0xedb88320:i>>>1;return i>>>0});
+function zip(files){let offset=0,parts=[],central=[];const header=n=>{const bytes=new Uint8Array(n),v=new DataView(bytes.buffer);return {bytes,u:(i,x)=>v.setUint32(i,x,true),s:(i,x)=>v.setUint16(i,x,true)}};for(const [name,data]of files){const file=new TextEncoder().encode(name);let crc=-1;for(const x of data)crc=crcTable[(crc^x)&255]^(crc>>>8);crc=(crc^-1)>>>0;const h=header(30),c=header(46);h.u(0,0x04034b50);h.s(4,20);h.u(14,crc);h.u(18,data.length);h.u(22,data.length);h.s(26,file.length);c.u(0,0x02014b50);c.s(4,20);c.s(6,20);c.u(16,crc);c.u(20,data.length);c.u(24,data.length);c.s(28,file.length);c.u(42,offset);parts.push(h.bytes,file,data);central.push(c.bytes,file);offset+=30+file.length+data.length}let size=central.reduce((s,a)=>s+a.length,0),e=header(22);e.u(0,0x06054b50);e.s(8,files.length);e.s(10,files.length);e.u(12,size);e.u(16,offset);return new Blob([...parts,...central,e.bytes],{type:'application/zip'})}

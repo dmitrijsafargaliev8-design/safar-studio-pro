@@ -1,0 +1,22 @@
+{
+  "ACE-Step/Ace-Step1.5": {
+    "revision": "19671f406d603126926c1b7e2adc169acbcade22",
+    "license": "mit"
+  },
+  "ACE-Step/acestep-v15-xl-sft": {
+    "revision": "d06de46b4622f781cf07f4a013a67d591ca52819",
+    "license": "mit"
+  },
+  "ACE-Step/acestep-v15-base": {
+    "revision": "e432212fec32b8965a14ffa57ae653438d6abd14",
+    "license": "mit"
+  },
+  "dropbox-dash/faster-whisper-large-v3-turbo": {
+    "revision": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+    "license": "mit"
+  },
+  "Qwen/Qwen2.5-1.5B-Instruct": {
+    "revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+    "license": "apache-2.0"
+  }
+}

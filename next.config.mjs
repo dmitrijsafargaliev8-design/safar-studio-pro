@@ -1,0 +1,1 @@
+export default {poweredByHeader:false,outputFileTracingIncludes:{"/api/**":["./public/certificate.ttf"]},experimental:{cpus:2},async headers(){return [{source:'/:path*',headers:[{key:'Referrer-Policy',value:'no-referrer'},{key:'X-Content-Type-Options',value:'nosniff'}]},{source:'/api/:path*',headers:[{key:'Cache-Control',value:'private, no-store'}]}]}};
